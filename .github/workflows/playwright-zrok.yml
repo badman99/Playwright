@@ -14,7 +14,7 @@ jobs:
   server:
     runs-on: ubuntu-latest
     timeout-minutes: 240
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,88 +26,91 @@ jobs:
         run: |
           echo "📥 Downloading bore..."
           curl -sL "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz" -o bore.tar.gz
-          tar -xzf bore.tar.gz
-          chmod +x bore
-          sudo mv bore /usr/local/bin/
+          tar -xzf bore.tar.gz && chmod +x bore && sudo mv bore /usr/local/bin/
+          echo "✅ bore installed: $(bore --version)"
 
       - name: Install Playwright MCP
         run: |
+          echo "📦 Installing @playwright/mcp..."
           npm install -g @playwright/mcp@latest
-          npx playwright install chromium
+          echo "🌐 Installing Chromium + deps..."
+          npx playwright install chromium --with-deps
+          echo "✅ Playwright MCP ready!"
 
       - name: Start MCP Server + bore Tunnel
+        env:
+          PLAYWRIGHT_CHROMIUM_ARGS: "--no-sandbox --disable-setuid-sandbox"
         run: |
-          # Start MCP server in background with all CI-friendly flags
+          echo "🚀 Starting Playwright MCP server..."
           npx @playwright/mcp@latest \
             --headless \
             --port $PORT \
             --host 0.0.0.0 \
-            --allowed-hosts '*' \
-            --allowed-origins '*' \
-            --no-sandbox \
             --browser chromium \
-            --shared-browser-context \
             > mcp.log 2>&1 &
           MCP_PID=$!
-          
-          # Wait for MCP to be ready
+
+          # Wait for MCP /sse endpoint to be ready
+          echo "⏳ Waiting for MCP server..."
           for i in {1..30}; do
-            if curl -s http://localhost:$PORT > /dev/null 2>&1; then
+            if curl -s http://localhost:$PORT/sse > /dev/null 2>&1; then
               echo "✅ MCP server ready on port $PORT"
               break
             fi
-            sleep 1
+            sleep 2
           done
-          
-          # Check if MCP started
+
+          # Check if MCP actually started
           if ! kill -0 $MCP_PID 2>/dev/null; then
-            echo "❌ MCP server failed to start"
+            echo "❌ MCP server failed to start. Logs:"
             cat mcp.log
             exit 1
           fi
-          
-          # Start bore tunnel in background
+
+          # Start bore tunnel
           echo "🌐 Starting bore tunnel..."
           bore local $PORT --to bore.pub > bore.log 2>&1 &
           BORE_PID=$!
-          
-          # Wait for bore to connect and extract URL
           sleep 5
+
           BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' bore.log | head -1)
-          
+
           if [ -n "$BORE_URL" ]; then
             echo ""
             echo "========================================"
-            echo "🚀 PLAYWRIGHT MCP LIVE AT:"
-            echo "http://$BORE_URL"
+            echo "🎭 PLAYWRIGHT MCP LIVE AT:"
+            echo "   SSE  → http://$BORE_URL/sse"
+            echo "   HTTP → http://$BORE_URL"
             echo "========================================"
             echo ""
-            
-            # Test the URL
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://$BORE_URL" 2>&1 || echo "000")
-            echo "🧪 URL test result: HTTP $HTTP_CODE"
+            echo "📝 opencode.jsonc config:"
+            echo '{'
+            echo '  "mcp": {'
+            echo '    "playwright": {'
+            echo '      "type": "sse",'
+            echo "      \"url\": \"http://$BORE_URL/sse\""
+            echo '    }'
+            echo '  }'
+            echo '}'
           else
-            echo "⚠️ Could not extract bore URL, showing logs:"
+            echo "⚠️ Could not get bore URL. bore logs:"
             cat bore.log
           fi
-          
-          # Keep both processes alive
+
+          # Keep alive loop with auto-reconnect
           while kill -0 $MCP_PID 2>/dev/null; do
             if ! kill -0 $BORE_PID 2>/dev/null; then
               echo "⚠️ bore tunnel died, restarting..."
               bore local $PORT --to bore.pub > bore.log 2>&1 &
               BORE_PID=$!
               sleep 5
-              
               BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' bore.log | tail -1)
-              if [ -n "$BORE_URL" ]; then
-                echo "🔄 Reconnected at: http://$BORE_URL"
-              fi
+              [ -n "$BORE_URL" ] && echo "🔄 Reconnected: http://$BORE_URL/sse"
             fi
             sleep 60
             echo "⏳ $(date) - Server running..."
           done
-          
-          echo "❌ MCP server died. Log:"
+
+          echo "❌ MCP server died. Logs:"
           cat mcp.log
           exit 1
