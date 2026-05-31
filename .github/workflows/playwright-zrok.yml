@@ -33,30 +33,31 @@ jobs:
         run: |
           echo "📦 Installing @playwright/mcp..."
           npm install -g @playwright/mcp@latest
-          echo "🌐 Installing Chromium + deps..."
-          npx playwright install chromium --with-deps
+          echo "🌐 Installing chrome-for-testing + deps..."
+          npx @playwright/mcp install-browser chrome-for-testing
+          npx playwright install chrome --with-deps
           echo "✅ Done!"
 
-      - name: Patch Chromium for no-sandbox
+      - name: Patch Chrome for no-sandbox
         run: |
-          CHROMIUM_BIN=$(find ~/.cache/ms-playwright -type f \( -name 'chrome' -o -name 'chromium' \) 2>/dev/null | head -1)
-          echo "Found chromium at: $CHROMIUM_BIN"
-          sudo tee /usr/local/bin/chromium-sandbox-fix > /dev/null << WRAP
+          CHROME_BIN=$(find ~/.cache/ms-playwright -type f -name 'chrome' 2>/dev/null | head -1)
+          echo "Found chrome at: $CHROME_BIN"
+          sudo tee /usr/local/bin/chrome-sandbox-fix > /dev/null << WRAP
           #!/bin/bash
-          exec "$CHROMIUM_BIN" --no-sandbox --disable-setuid-sandbox "\$@"
+          exec "$CHROME_BIN" --no-sandbox --disable-setuid-sandbox "\$@"
           WRAP
-          sudo chmod +x /usr/local/bin/chromium-sandbox-fix
-          echo "✅ Chromium wrapper created!"
+          sudo chmod +x /usr/local/bin/chrome-sandbox-fix
+          echo "✅ Chrome wrapper created!"
 
       - name: Start MCP Server + bore Tunnel
         run: |
           echo "🚀 Starting Playwright MCP server..."
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/chromium-sandbox-fix \
+          PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/chrome-sandbox-fix \
           npx @playwright/mcp@latest \
             --headless \
             --port $PORT \
             --host 0.0.0.0 \
-            --browser chromium \
+            --browser chrome-for-testing \
             --allowed-origins '*' \
             --allowed-hosts '*' \
             > mcp.log 2>&1 &
