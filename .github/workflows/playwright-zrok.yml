@@ -17,7 +17,7 @@ on:
     - cron: '0 */5 * * *'
 
 env:
-  ZROK_TOKEN: ${{ secrets.ZROK_TOKEN }}
+  ZROK_TOKEN: jphzLUZd8sIM
   PLAYWRIGHT_PORT: 3002
 
 jobs:
