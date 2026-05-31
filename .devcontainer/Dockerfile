@@ -29,8 +29,16 @@ RUN npx playwright install chromium
 # Install additional browsers with deps (uncomment if needed)
 # RUN npx playwright install-deps chromium
 
+# Install zrok for static tunneling
+RUN apt-get update && apt-get install -y wget tar \
+    && wget -q https://github.com/openziti/zrok/releases/latest/download/zrok-linux-amd64.tar.gz \
+    && tar -xzf zrok-linux-amd64.tar.gz -C /usr/local/bin zrok \
+    && rm zrok-linux-amd64.tar.gz \
+    && chmod +x /usr/local/bin/zrok \
+    && rm -rf /var/lib/apt/lists/*
+
 # Verify installations
-RUN node -v && npm -v && npx playwright --version
+RUN node -v && npm -v && npx playwright --version && zrok version
 
 # Expose the MCP server port
 EXPOSE 3002
