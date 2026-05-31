@@ -27,7 +27,10 @@ jobs:
         run: |
           echo "📥 Downloading zrok v2.0.4..."
           wget -q "https://github.com/openziti/zrok/releases/download/v2.0.4/zrok_2.0.4_linux_amd64.tar.gz" -O zrok.tar.gz
+          ls -la zrok.tar.gz
+          tar -tzf zrok.tar.gz
           tar -xzf zrok.tar.gz
+          ls -la
           mv zrok2 zrok
           chmod +x zrok
           sudo mv zrok /usr/local/bin/
@@ -35,7 +38,7 @@ jobs:
 
       - name: Enable zrok
         run: |
-          echo "$ZROK_TOKEN" | zrok enable
+          zrok enable $ZROK_TOKEN
 
       - name: Reserve static URL
         run: |
