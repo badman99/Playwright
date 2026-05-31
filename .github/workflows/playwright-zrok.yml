@@ -63,17 +63,17 @@ jobs:
             exit 1
           fi
           
-          # Create persistent share with static token (no --open flag!)
+          # Create persistent share with static token (NO --open, NO --headless here!)
           echo "🔗 Creating zrok share..."
-          zrok create share public --backend-mode proxy --share-token playwright-mcp-gha $PORT --headless || true
+          zrok create share public --share-token playwright-mcp-gha --backend-mode proxy $PORT 2>&1 | tee zrok_create.log || true
           
-          # Also start an ephemeral share to get a working URL immediately
+          # Also start an ephemeral share to get a working URL immediately (NO --headless!)
           echo "🌐 Starting zrok tunnel..."
-          zrok share public localhost:$PORT --headless > zrok.log 2>&1 &
+          zrok share public localhost:$PORT > zrok.log 2>&1 &
           ZROK_PID=$!
           
           # Wait and extract URL
-          sleep 5
+          sleep 8
           ZROK_URL=$(grep -oE '[a-zA-Z0-9]+\.shares\.zrok\.io' zrok.log | head -1)
           
           if [ -n "$ZROK_URL" ]; then
@@ -84,18 +84,25 @@ jobs:
             echo "========================================"
             echo ""
           else
-            echo "⚠️ Could not extract zrok URL, showing logs:"
+            echo "⚠️ Could not extract zrok URL from ephemeral share"
+            echo "zrok_create.log:"
+            cat zrok_create.log
+            echo "zrok.log:"
             cat zrok.log
           fi
           
           # Keep both processes alive
-          while kill -0 $MCP_PID 2>/dev/null && kill -0 $ZROK_PID 2>/dev/null; do
+          while kill -0 $MCP_PID 2>/dev/null; do
+            if ! kill -0 $ZROK_PID 2>/dev/null; then
+              echo "⚠️ zrok tunnel died, restarting..."
+              zrok share public localhost:$PORT > zrok.log 2>&1 &
+              ZROK_PID=$!
+              sleep 5
+            fi
             sleep 60
             echo "⏳ $(date) - Server running..."
           done
           
-          echo "❌ One of the processes died. MCP log:"
+          echo "❌ MCP server died. Log:"
           cat mcp.log
-          echo "Zrok log:"
-          cat zrok.log
           exit 1
