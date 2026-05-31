@@ -8,9 +8,7 @@ on:
     - cron: '0 */4 * * *'
 
 env:
-  ZROK_TOKEN: jphzLUZd8sIM
   PORT: 3002
-  NAME: playwright-mcp-gha
 
 jobs:
   server:
@@ -24,29 +22,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install zrok
+      - name: Install bore
         run: |
-          echo "📥 Downloading zrok v2.0.4..."
-          curl -sL "https://github.com/openziti/zrok/releases/download/v2.0.4/zrok_2.0.4_linux_amd64.tar.gz" -o zrok.tar.gz
-          tar -xzf zrok.tar.gz
-          mv zrok2 zrok
-          chmod +x zrok
-          sudo mv zrok /usr/local/bin/
-
-      - name: Enable zrok
-        run: |
-          zrok enable $ZROK_TOKEN --headless
-
-      - name: Create reserved name (if not exists)
-        run: |
-          zrok create name -n public $NAME || echo "Name already exists or using default"
+          echo "📥 Downloading bore..."
+          curl -sL "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz" -o bore.tar.gz
+          tar -xzf bore.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
 
       - name: Install Playwright
         run: |
           npm install -g @playwright/mcp@latest
           npx playwright install chromium
 
-      - name: Start MCP Server + zrok Tunnel
+      - name: Start MCP Server + bore Tunnel
         run: |
           # Start MCP server in background
           npx @playwright/mcp@latest --headless --port $PORT --host 0.0.0.0 > mcp.log 2>&1 &
@@ -68,36 +57,43 @@ jobs:
             exit 1
           fi
           
-          # Start zrok tunnel with RESERVED name (static URL!)
-          echo "🌐 Starting zrok tunnel with reserved name: $NAME"
-          zrok share public localhost:$PORT -n public:$NAME > zrok.log 2>&1 &
-          ZROK_PID=$!
+          # Start bore tunnel in background
+          echo "🌐 Starting bore tunnel..."
+          bore local $PORT --to bore.pub > bore.log 2>&1 &
+          BORE_PID=$!
           
-          # Wait and extract URL
-          sleep 8
-          ZROK_URL=$(grep -oE '[a-zA-Z0-9\-]+\.share\.zrok\.io|[a-zA-Z0-9\-]+\.shares\.zrok\.io' zrok.log | head -1)
+          # Wait for bore to connect and extract URL
+          sleep 5
+          BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' bore.log | head -1)
           
-          if [ -n "$ZROK_URL" ]; then
+          if [ -n "$BORE_URL" ]; then
             echo ""
             echo "========================================"
-            echo "🚀 MCP SERVER LIVE AT:"
-            echo "https://$ZROK_URL"
+            echo "🚀 PLAYWRIGHT MCP LIVE AT:"
+            echo "http://$BORE_URL"
             echo "========================================"
             echo ""
+            
+            # Test the URL
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://$BORE_URL" 2>&1 || echo "000")
+            echo "🧪 URL test result: HTTP $HTTP_CODE"
           else
-            echo "⚠️ Could not extract zrok URL, showing logs:"
-            cat zrok.log
-            # Try to guess the URL pattern
-            echo "Expected URL: https://${NAME}.share.zrok.io or similar"
+            echo "⚠️ Could not extract bore URL, showing logs:"
+            cat bore.log
           fi
           
           # Keep both processes alive
           while kill -0 $MCP_PID 2>/dev/null; do
-            if ! kill -0 $ZROK_PID 2>/dev/null; then
-              echo "⚠️ zrok tunnel died, restarting..."
-              zrok share public localhost:$PORT -n public:$NAME > zrok.log 2>&1 &
-              ZROK_PID=$!
+            if ! kill -0 $BORE_PID 2>/dev/null; then
+              echo "⚠️ bore tunnel died, restarting..."
+              bore local $PORT --to bore.pub > bore.log 2>&1 &
+              BORE_PID=$!
               sleep 5
+              
+              BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' bore.log | tail -1)
+              if [ -n "$BORE_URL" ]; then
+                echo "🔄 Reconnected at: http://$BORE_URL"
+              fi
             fi
             sleep 60
             echo "⏳ $(date) - Server running..."
