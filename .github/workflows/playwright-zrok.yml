@@ -10,6 +10,7 @@ on:
 env:
   ZROK_TOKEN: jphzLUZd8sIM
   PORT: 3002
+  NAME: playwright-mcp-gha
 
 jobs:
   server:
@@ -26,7 +27,7 @@ jobs:
       - name: Install zrok
         run: |
           echo "📥 Downloading zrok v2.0.4..."
-          wget -q "https://github.com/openziti/zrok/releases/download/v2.0.4/zrok_2.0.4_linux_amd64.tar.gz" -O zrok.tar.gz
+          curl -sL "https://github.com/openziti/zrok/releases/download/v2.0.4/zrok_2.0.4_linux_amd64.tar.gz" -o zrok.tar.gz
           tar -xzf zrok.tar.gz
           mv zrok2 zrok
           chmod +x zrok
@@ -35,6 +36,10 @@ jobs:
       - name: Enable zrok
         run: |
           zrok enable $ZROK_TOKEN --headless
+
+      - name: Create reserved name (if not exists)
+        run: |
+          zrok create name -n public $NAME || echo "Name already exists or using default"
 
       - name: Install Playwright
         run: |
@@ -63,18 +68,14 @@ jobs:
             exit 1
           fi
           
-          # Create persistent share with static token (NO --open, NO --headless here!)
-          echo "🔗 Creating zrok share..."
-          zrok create share public --share-token playwright-mcp-gha --backend-mode proxy $PORT 2>&1 | tee zrok_create.log || true
-          
-          # Also start an ephemeral share to get a working URL immediately (NO --headless!)
-          echo "🌐 Starting zrok tunnel..."
-          zrok share public localhost:$PORT > zrok.log 2>&1 &
+          # Start zrok tunnel with RESERVED name (static URL!)
+          echo "🌐 Starting zrok tunnel with reserved name: $NAME"
+          zrok share public localhost:$PORT -n public:$NAME > zrok.log 2>&1 &
           ZROK_PID=$!
           
           # Wait and extract URL
           sleep 8
-          ZROK_URL=$(grep -oE '[a-zA-Z0-9]+\.shares\.zrok\.io' zrok.log | head -1)
+          ZROK_URL=$(grep -oE '[a-zA-Z0-9\-]+\.share\.zrok\.io|[a-zA-Z0-9\-]+\.shares\.zrok\.io' zrok.log | head -1)
           
           if [ -n "$ZROK_URL" ]; then
             echo ""
@@ -84,18 +85,17 @@ jobs:
             echo "========================================"
             echo ""
           else
-            echo "⚠️ Could not extract zrok URL from ephemeral share"
-            echo "zrok_create.log:"
-            cat zrok_create.log
-            echo "zrok.log:"
+            echo "⚠️ Could not extract zrok URL, showing logs:"
             cat zrok.log
+            # Try to guess the URL pattern
+            echo "Expected URL: https://${NAME}.share.zrok.io or similar"
           fi
           
           # Keep both processes alive
           while kill -0 $MCP_PID 2>/dev/null; do
             if ! kill -0 $ZROK_PID 2>/dev/null; then
               echo "⚠️ zrok tunnel died, restarting..."
-              zrok share public localhost:$PORT > zrok.log 2>&1 &
+              zrok share public localhost:$PORT -n public:$NAME > zrok.log 2>&1 &
               ZROK_PID=$!
               sleep 5
             fi
