@@ -1,0 +1,96 @@
+name: Playwright MCP Server with zrok Tunnel
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'start'
+        type: choice
+        options:
+          - start
+          - stop
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */5 * * *'
+
+env:
+  ZROK_TOKEN: ${{ secrets.ZROK_TOKEN }}
+  PLAYWRIGHT_PORT: 3002
+
+jobs:
+  playwright-mcp-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright MCP
+        run: |
+          npm install -g @playwright/mcp@latest
+          npx playwright install chromium
+          npx playwright install-deps chromium || true
+
+      - name: Install zrok
+        run: |
+          wget -q https://github.com/openziti/zrok/releases/latest/download/zrok-linux-amd64.tar.gz
+          tar -xzf zrok-linux-amd64.tar.gz -C /usr/local/bin zrok
+          chmod +x /usr/local/bin/zrok
+          zrok version
+
+      - name: Enable zrok environment
+        run: |
+          echo "$ZROK_TOKEN" | zrok enable
+          echo "✅ zrok enabled"
+
+      - name: Reserve static share (if not exists)
+        run: |
+          zrok reserve public localhost:$PLAYWRIGHT_PORT --unique-name playwright-mcp-gha || true
+          echo "✅ Static share reserved: https://playwright-mcp-gha.share.zrok.io"
+
+      - name: Start Playwright MCP Server
+        run: |
+          echo "🚀 Starting Playwright MCP Server on port $PLAYWRIGHT_PORT..."
+          npx @playwright/mcp@latest \
+            --headless \
+            --port $PLAYWRIGHT_PORT \
+            --host 0.0.0.0 \
+            --browser chromium &
+          MCP_PID=$!
+          echo "MCP_PID=$MCP_PID" >> $GITHUB_ENV
+          
+          # Wait for server to be ready
+          for i in {1..30}; do
+            if curl -s http://localhost:$PLAYWRIGHT_PORT > /dev/null 2>&1; then
+              echo "✅ Playwright MCP Server is ready!"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Start zrok Tunnel
+        run: |
+          echo "🔗 Starting zrok tunnel..."
+          echo "🌐 Your static URL: https://playwright-mcp-gha.share.zrok.io"
+          echo ""
+          echo "📋 Add this to your OpenCode config:"
+          echo '  {"mcp": {"playwright": {"type": "http", "url": "https://playwright-mcp-gha.share.zrok.io"}}}'
+          echo ""
+          
+          # Start zrok tunnel (this will block)
+          zrok share reserved playwright-mcp-gha
+
+      - name: Keep alive (fallback)
+        if: failure()
+        run: |
+          echo "⚠️ Tunnel stopped. Keeping job alive for restart..."
+          sleep 3600

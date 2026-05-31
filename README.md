@@ -1,147 +1,81 @@
-# Playwright MCP Server for Codespaces 🎭 + 🌐 zrok
+# Playwright MCP Server - GitHub Actions
 
-A production-ready GitHub Codespaces configuration that automatically spins up a **Playwright MCP (Model Context Protocol) Server** with a **permanent static public URL** via [zrok](https://zrok.io).
-
-## ✨ What's Special?
-
-**🚀 STATIC URL - Never Changes!**
-```
-https://playwright-mcp-static.share.zrok.io
-```
-Unlike GitHub's port forwarding URLs that change every session, this **never changes**! Configure once in OpenCode/HuggingFace and use forever.
-
----
+🎭 **Full browser automation server** running on GitHub Actions with **static URL** via zrok tunnel.
 
 ## 🚀 Quick Start
 
-### 1. Create a Codespace
-1. Go to [github.com/badman99/Playwright](https://github.com/badman99/Playwright)
-2. Click **"Code"** → **"Codespaces"** → **"Create codespace on main"**
-3. Wait for the container to build (~2-3 minutes)
+### 1. Set Secrets
+Go to **Settings → Secrets and variables → Actions** and add:
+- `ZROK_TOKEN` - Your zrok token (get from [zrok.io](https://zrok.io))
 
-### 2. That's It! 🎉
+### 2. Trigger Workflow
+Go to **Actions → Playwright MCP Server with zrok Tunnel → Run workflow**
 
-The container will automatically:
-- ✅ Install Node.js 20 + Playwright MCP
-- ✅ Install Chromium browser (headless)
-- ✅ Install and configure zrok tunnel
-- ✅ Start the MCP server on port 3002
-- ✅ Start the zrok tunnel with **static URL**
-
-**Your permanent URL:**
+### 3. Get Your URL
+The workflow will output your **permanent static URL**:
 ```
-https://playwright-mcp-static.share.zrok.io
+https://playwright-mcp-gha.share.zrok.io
 ```
 
-### 3. Connect from HuggingFace / OpenCode
+## 📝 OpenCode Config
 
-Add this to your OpenCode config (`opencode.jsonc`) — **one time only!**
-
+Add this to your `opencode.jsonc`:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "playwright": {
       "type": "http",
-      "url": "https://playwright-mcp-static.share.zrok.io"
+      "url": "https://playwright-mcp-gha.share.zrok.io"
     }
   }
 }
 ```
 
-Then restart your HF Space — AI will have full browser automation! 🎉
+**URL never changes!** 🔥
 
----
+## ⏰ Auto-Restart
+The workflow auto-triggers every 5 hours to keep the server alive!
 
-## 🛠️ What's Included
+## 🛠️ Features
+- ✅ All 23 Playwright MCP tools
+- ✅ Headless Chromium browser
+- ✅ Static URL (never changes)
+- ✅ Auto-restart every 5 hours
+- ✅ Network monitoring, screenshots, JS execution
 
-- **Node.js 20** + npm
-- **Playwright MCP Server** (`@playwright/mcp@latest`)
-- **Chromium Browser** (pre-installed, headless)
-- **zrok Tunnel** (static URL that never changes)
-- **Auto-start** on container launch
-- **No manual setup needed!**
+## 📡 Available Tools
+- `browser_navigate` - Open any URL
+- `browser_click` - Click elements
+- `browser_type` - Fill inputs
+- `browser_take_screenshot` - Screenshots
+- `browser_evaluate` - Run JavaScript
+- `browser_network_requests` - Monitor network
+- `browser_file_upload` - Upload files
+- `browser_fill_form` - Form automation
+- + 14 more tools!
 
----
-
-## 📡 Available MCP Tools
-
-Once connected, AI can use these tools:
-
-| Tool | Description |
-|------|-------------|
-| `browser_navigate` | Open any URL |
-| `browser_click` | Click elements |
-| `browser_type` | Fill input fields |
-| `browser_take_screenshot` | Capture screenshots |
-| `browser_snapshot` | Get page structure |
-| `browser_network_requests` | Monitor network traffic |
-| `browser_evaluate` | Run JavaScript |
-| `browser_file_upload` | Upload files |
-
----
-
-## ⚠️ Important Notes
-
-### Codespace Idle Timeout
-Free tier Codespaces **auto-shutdown after 30 minutes of inactivity**.
-
-**Solutions:**
-- **Upgrade to paid** ($0.18/hour) for no timeout
-- **Use it regularly** to keep alive (zrok traffic counts as activity!)
-- **No URL changes** on restart - same zrok URL works!
-
-### URL Stability
-**🎉 GREAT NEWS:** The zrok URL `https://playwright-mcp-static.share.zrok.io` **never changes**!
-- Codespace sleep → wake up → **Same URL!**
-- Codespace stop → start → **Same URL!**
-- Only if you delete the reserved share will it change
-
----
-
-## 🔧 How It Works
+## 🎯 How It Works
 
 ```
-┌─────────────────────────────────────┐
-│  GitHub Codespace Container         │
-│  ┌─────────────────────────────┐  │
-│  │ Playwright MCP Server       │  │
-│  │ Port: 3002                  │  │
-│  └─────────────────────────────┘  │
-│              ↓                      │
-│  ┌─────────────────────────────┐  │
-│  │ zrok Tunnel                 │  │
-│  │ https://playwright-mcp-...  │  │
-│  └─────────────────────────────┘  │
-└─────────────────────────────────────┘
-              ↓
-     Public Internet
-              ↓
-┌─────────────────────────────────────┐
-│  HuggingFace / OpenCode             │
-│  Config: https://playwright-mcp...│
-└─────────────────────────────────────┘
+GitHub Actions Runner (Ubuntu, 6h max)
+├── Playwright MCP Server (port 3002)
+└── zrok Tunnel (static URL)
+    └── https://playwright-mcp-gha.share.zrok.io
 ```
 
----
+**Note:** GitHub Actions has a 6-hour limit. The workflow auto-restarts every 5 hours to maintain continuous uptime!
 
-## 🐛 Troubleshooting
+## 🔧 Manual Control
 
-| Issue | Solution |
-|-------|----------|
-| URL not working | Wait 2-3 min after Codespace starts |
-| zrok not found | Should be pre-installed. Run `zrok version` |
-| Server not starting | Check Terminal tab for logs |
-| Chrome not found | Run `npx playwright install chromium` in terminal |
-| zrok token expired | Contact admin for new token |
+**Start:** Actions → Run workflow → `start`
+**Stop:** Actions → Run workflow → `stop` (cancels running job)
 
----
-
-## 📝 License
-
-MIT - Use freely!
+## ⚠️ Limitations
+- Max 6 hours per run (GitHub limit)
+- Auto-restarts every 5 hours
+- Need to re-trigger manually if Actions disabled
 
 ---
 
-**Happy Browser Automation!** 🎭🔥
-**No more URL changes, no more config updates!** 🎉
+**Enjoy full browser automation!** 🎭🔥
