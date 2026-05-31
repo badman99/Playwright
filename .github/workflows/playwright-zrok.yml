@@ -30,15 +30,24 @@ jobs:
           chmod +x bore
           sudo mv bore /usr/local/bin/
 
-      - name: Install Playwright
+      - name: Install Playwright MCP
         run: |
           npm install -g @playwright/mcp@latest
           npx playwright install chromium
 
       - name: Start MCP Server + bore Tunnel
         run: |
-          # Start MCP server in background
-          npx @playwright/mcp@latest --headless --port $PORT --host 0.0.0.0 --allowed-hosts '*' > mcp.log 2>&1 &
+          # Start MCP server in background with all CI-friendly flags
+          npx @playwright/mcp@latest \
+            --headless \
+            --port $PORT \
+            --host 0.0.0.0 \
+            --allowed-hosts '*' \
+            --allowed-origins '*' \
+            --no-sandbox \
+            --browser chromium \
+            --shared-browser-context \
+            > mcp.log 2>&1 &
           MCP_PID=$!
           
           # Wait for MCP to be ready
