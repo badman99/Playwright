@@ -30,7 +30,8 @@ jobs:
         run: |
           echo "📦 Installing tools..."
           npm install -g @playwright/mcp@latest serve
-          npx playwright install chrome --with-deps
+          npx @playwright/mcp install-browser chromium
+          npx playwright install-deps chromium
           
           # bore.pub install (TCP tunnel — SSE streaming compatible)
           echo "📥 Downloading bore..."
@@ -38,32 +39,25 @@ jobs:
           tar -xzf bore.tar.gz && chmod +x bore && sudo mv bore /usr/local/bin/
           echo "✅ All dependencies ready!"
 
-      - name: Setup Chrome no-sandbox wrapper
-        run: |
-          CHROME_BIN=$(find ~/.cache/ms-playwright -type f -name 'chrome' 2>/dev/null | head -1)
-          echo "🔍 Chrome found: $CHROME_BIN"
-          sudo tee /usr/local/bin/chrome-nosandbox > /dev/null << WRAP
-          #!/bin/bash
-          exec "$CHROME_BIN" --no-sandbox --disable-setuid-sandbox "\$@"
-          WRAP
-          sudo chmod +x /usr/local/bin/chrome-nosandbox
-          echo "✅ Chrome wrapper ready!"
-
       - name: Create storage directories
         run: |
           mkdir -p $SCREENSHOTS_DIR $UPLOADS_DIR
           echo "✅ Storage dirs ready!"
 
       - name: Start Playwright MCP
+        env:
+          PLAYWRIGHT_MCP_BROWSER: chromium
+          PLAYWRIGHT_MCP_HEADLESS: true
+          PLAYWRIGHT_MCP_USER_AGENT: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         run: |
           echo "🎭 Starting Playwright MCP on :$MCP_PORT..."
-          PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/chrome-nosandbox \
           npx @playwright/mcp@latest \
+            --config stealth-config.json \
             --headless \
             --port $MCP_PORT \
             --host 127.0.0.1 \
             --isolated \
-            --browser chrome-for-testing \
+            --no-sandbox \
             --allowed-origins '*' \
             --allowed-hosts '*' \
             --output-dir $SCREENSHOTS_DIR \
