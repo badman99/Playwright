@@ -10,6 +10,7 @@ on:
 env:
   MCP_PORT: 3002
   STORAGE_PORT: 3003
+  TERMINAL_PORT: 3004
   ROUTER_PORT: 8080
   SCREENSHOTS_DIR: /tmp/storage/screenshots
   UPLOADS_DIR: /tmp/storage/uploads
@@ -29,10 +30,16 @@ jobs:
       - name: Install dependencies
         run: |
           echo "📦 Installing tools..."
-          npm install -g @playwright/mcp@latest serve
+          npm install -g @playwright/mcp@latest
           npx @playwright/mcp install-browser chromium
           npx playwright install-deps chromium
-          
+
+          # terminal-mcp-server
+          echo "🖥️ Installing terminal-mcp-server..."
+          git clone https://github.com/weidwonder/terminal-mcp-server.git /tmp/terminal-mcp
+          cd /tmp/terminal-mcp && npm install && npm run build
+          cd -
+
           # bore.pub install (TCP tunnel — SSE streaming compatible)
           echo "📥 Downloading bore..."
           curl -sL "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz" -o bore.tar.gz
@@ -70,16 +77,25 @@ jobs:
             sleep 2
           done
 
-      - name: Start Storage File Server
+      - name: Start Storage Server
         run: |
           echo "📁 Starting storage server on :$STORAGE_PORT..."
-          serve /tmp/storage \
-            --listen $STORAGE_PORT \
-            --no-clipboard \
-            --cors \
-            > /tmp/storage.log 2>&1 &
+          STORAGE_PORT=$STORAGE_PORT STORAGE_ROOT=/tmp/storage \
+          node scripts/storage-server.js > /tmp/storage.log 2>&1 &
           sleep 2
-          nc -z localhost $STORAGE_PORT && echo "✅ Storage server ready!" || echo "⚠️ Storage server issue"
+          curl -sf http://localhost:$STORAGE_PORT/health > /dev/null \
+            && echo "✅ Storage server ready!" \
+            || (cat /tmp/storage.log && exit 1)
+
+      - name: Start Terminal MCP
+        run: |
+          echo "🖥️ Starting terminal MCP on :3004..."
+          node /tmp/terminal-mcp/build/index.js --sse --port 3004 \
+            > /tmp/terminal.log 2>&1 &
+          sleep 3
+          nc -z localhost 3004 \
+            && echo "✅ Terminal MCP ready!" \
+            || (echo "⚠️ Terminal MCP issue:" && cat /tmp/terminal.log)
 
       - name: Start Local Router
         run: |

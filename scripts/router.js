@@ -19,8 +19,9 @@ const ROUTER_PORT = 8080;
 const ROUTES = {
   '/playwright': { target: 'http://localhost:3002', stripPrefix: true },
   '/storage':    { target: 'http://localhost:3003', stripPrefix: true },
+  '/terminal':   { target: 'http://localhost:3004', stripPrefix: true },
   // Future:
-  // '/puppeteer':  { target: 'http://localhost:3004', stripPrefix: true },
+  // '/puppeteer':  { target: 'http://localhost:3005', stripPrefix: true },
 };
 
 // ─── Proxy helper ────────────────────────────────────────────────
