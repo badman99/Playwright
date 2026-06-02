@@ -239,7 +239,7 @@ jobs:
             local port="$1"
             local tunnel="$2"
             local worker="$3"
-            local reg_url=$(curl -sf --max-time 3 "$worker/health" 2>/dev/null | grep -oE '"tunnelUrl":"[^"]*"' | head -1 | cut -d'"' -f4)
+            local reg_url=$(curl -sf --max-time 3 "$worker/health" 2>/dev/null | grep -oE '"tunnelUrl"\s*:\s*"[^"]*"' | head -1 | grep -oE 'https?://[^"]+')
             if [ "$reg_url" != "$tunnel" ]; then
               echo "⚠️ Worker :$port has stale URL ($reg_url), forcing re-register..."
               register_worker "$worker" "$tunnel"
@@ -298,7 +298,7 @@ jobs:
 
               local worker_health=$(curl -sf --max-time 5 "$worker/health" 2>/dev/null)
               if [ -n "$worker_health" ]; then
-                local registered_url=$(echo "$worker_health" | grep -oE '"tunnelUrl":"[^"]*"' | head -1 | cut -d'"' -f4)
+                 local registered_url=$(echo "$worker_health" | grep -oE '"tunnelUrl"\s*:\s*"[^"]*"' | head -1 | grep -oE 'https?://[^"]+')
                 if [ -n "$registered_url" ] && [ "$registered_url" != "$tunnel" ]; then
                   echo "⚠️ $(date) — Worker :$port has stale URL ($registered_url), re-registering ($tunnel)..."
                   register_worker "$worker" "$tunnel"
