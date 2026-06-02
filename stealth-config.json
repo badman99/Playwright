@@ -12,8 +12,6 @@
         "--disable-renderer-backgrounding",
         "--disable-features=IsolateOrigins,site-per-process,Translate,OptimizationHints,InterestFeedContentSuggestions,CertificateTransparencyComponentUpdater,AutofillServerCommunication",
         "--enable-features=NetworkService,NetworkServiceInProcess",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-infobars",
         "--window-size=1920,1080",
         "--start-maximized",
         "--force-device-scale-factor=1",
@@ -25,7 +23,6 @@
         "--no-default-browser-check",
         "--password-store=basic",
         "--use-mock-keychain",
-        "--force-webrtc-ip-handling-policy=default_public_interface_only",
         "--disable-ipc-flooding-protection",
         "--disable-features=ExtendedMouseButtons",
         "--no-first-run"
@@ -35,7 +32,6 @@
       }
     },
     "contextOptions": {
-      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
       "viewport": {
         "width": 1920,
         "height": 1080

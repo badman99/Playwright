@@ -38,8 +38,24 @@ jobs:
         run: |
           echo "📦 Installing tools..."
           npm install -g @playwright/mcp@latest
-          npx @playwright/mcp install-browser chromium
           npx playwright install-deps chromium
+
+          echo "🥷 Installing CloakBrowser stealth binary..."
+          npm install -g cloakbrowser playwright-core
+          node -e "const {ensureBinary}=require('cloakbrowser');ensureBinary().then(p=>console.log('✅ Binary:',p))"
+          CLOAK_PATH=$(find ~/.cloakbrowser -name "chrome" -type f | head -1)
+          if [ -z "$CLOAK_PATH" ]; then
+            echo "❌ CloakBrowser binary not found!"
+            find ~/.cloakbrowser -type f 2>/dev/null || echo "No ~/.cloakbrowser dir"
+            exit 1
+          fi
+          echo "CLOAKBROWSER_PATH=$CLOAK_PATH" >> $GITHUB_ENV
+          echo "✅ CloakBrowser binary: $CLOAK_PATH"
+
+          echo "🔤 Installing fonts for anti-bot canvas hash matching..."
+          sudo apt-get update -qq && sudo apt-get install -y -qq \
+            fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
+            fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf 2>/dev/null || true
 
           echo "🖥️ Installing terminal-mcp-server..."
           git clone https://github.com/weidwonder/terminal-mcp-server.git /tmp/terminal-mcp
@@ -56,16 +72,21 @@ jobs:
           tar -xzf bore.tar.gz && chmod +x bore && sudo mv bore /usr/local/bin/
           echo "✅ All dependencies ready!"
 
-      - name: Create storage directories
+      - name: Configure stealth + storage
         run: |
           mkdir -p $SCREENSHOTS_DIR $UPLOADS_DIR
-          echo "✅ Storage dirs ready!"
+          echo "🥷 Injecting CloakBrowser executablePath into config..."
+          jq --arg path "$CLOAKBROWSER_PATH" \
+            '.browser.launchOptions.executablePath = $path' \
+            stealth-config.json > /tmp/stealth-config.json
+          mv /tmp/stealth-config.json stealth-config.json
+          echo "✅ Config updated with binary: $CLOAKBROWSER_PATH"
+          cat stealth-config.json | jq '.browser.launchOptions.executablePath'
 
       - name: Start Playwright MCP
         run: |
-          echo "🎭 Starting Playwright MCP on :$MCP_PORT..."
+          echo "🎭 Starting Playwright MCP (CloakBrowser stealth) on :$MCP_PORT..."
           PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
-          PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36" \
           npx @playwright/mcp@latest \
             --config stealth-config.json \
             --headless \
@@ -152,7 +173,6 @@ jobs:
             fuser -k $MCP_PORT/tcp 2>/dev/null || true
             sleep 1
             PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
-            PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36" \
             npx @playwright/mcp@latest \
               --config stealth-config.json \
               --headless \
