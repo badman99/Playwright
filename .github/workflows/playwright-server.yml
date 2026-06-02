@@ -9,7 +9,6 @@ on:
 
 env:
   MCP_PORT: 3002
-  STORAGE_PORT: 3003
   TERMINAL_PORT: 3004
   WEBDAV_PORT: 3005
   ROUTER_PORT: 8080
@@ -84,20 +83,6 @@ jobs:
             sleep 2
           done
 
-      - name: Start Storage Server
-        run: |
-          echo "📁 Starting storage server on :$STORAGE_PORT..."
-          STORAGE_PORT=$STORAGE_PORT STORAGE_ROOT=/tmp/storage \
-          node scripts/storage-server.js > /tmp/storage.log 2>&1 &
-          sleep 3
-          if curl -sf http://localhost:$STORAGE_PORT/health > /dev/null; then
-            echo "✅ Storage server ready!"
-          else
-            echo "❌ Storage server failed!"
-            cat /tmp/storage.log
-            exit 1
-          fi
-
       - name: Start Terminal MCP
         run: |
           echo "🖥️ Starting terminal MCP on :3004 via mcp-proxy..."
@@ -144,7 +129,6 @@ jobs:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
         run: |
-          # ─── Service Restart Functions ─────────────────────────────
           restart_mcp() {
             echo "🔄 Restarting Playwright MCP on :$MCP_PORT..."
             fuser -k $MCP_PORT/tcp 2>/dev/null || true
@@ -167,20 +151,6 @@ jobs:
               sleep 2
             done
             echo "❌ MCP restart failed!"
-            return 1
-          }
-
-          restart_storage() {
-            echo "🔄 Restarting Storage Server on :$STORAGE_PORT..."
-            fuser -k $STORAGE_PORT/tcp 2>/dev/null || true
-            sleep 1
-            STORAGE_PORT=$STORAGE_PORT STORAGE_ROOT=/tmp/storage \
-            node scripts/storage-server.js > /tmp/storage.log 2>&1 &
-            for i in $(seq 1 10); do
-              curl -sf http://localhost:$STORAGE_PORT/health > /dev/null 2>&1 && echo "✅ Storage restarted!" && return 0
-              sleep 2
-            done
-            echo "❌ Storage restart failed!"
             return 1
           }
 
@@ -251,7 +221,6 @@ jobs:
             echo "╠══════════════════════════════════════════════════╣"
             echo "║  🎭 MCP:      $WORKER_URL/playwright/sse"
             echo "║  🖥️ Terminal: $WORKER_URL/terminal/sse"
-            echo "║  📁 Storage:  $WORKER_URL/storage/"
             echo "║  📂 WebDAV:   $WORKER_URL/storage-dav/"
             echo "╚══════════════════════════════════════════════════╝"
             echo ""
@@ -290,11 +259,6 @@ jobs:
             if ! nc -z localhost $MCP_PORT 2>/dev/null; then
               echo "⚠️ $(date) — MCP :$MCP_PORT down! Restarting..."
               restart_mcp
-            fi
-
-            if ! curl -sf http://localhost:$STORAGE_PORT/health > /dev/null 2>&1; then
-              echo "⚠️ $(date) — Storage :$STORAGE_PORT down! Restarting..."
-              restart_storage
             fi
 
             if ! nc -z localhost $TERMINAL_PORT 2>/dev/null; then
