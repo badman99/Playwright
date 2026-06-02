@@ -275,6 +275,16 @@ jobs:
                   $WEBDAV_PORT) WEBDAV_BORE_PID="$new_pid"; WEBDAV_TUNNEL="$new_tunnel" ;;
                 esac
                 register_worker "$worker" "$new_tunnel"
+                return
+              fi
+
+              local worker_health=$(curl -sf --max-time 5 "$worker/health" 2>/dev/null)
+              if [ -n "$worker_health" ]; then
+                local registered_url=$(echo "$worker_health" | grep -oE '"tunnelUrl":"[^"]*"' | head -1 | cut -d'"' -f4)
+                if [ -n "$registered_url" ] && [ "$registered_url" != "$tunnel" ]; then
+                  echo "⚠️ $(date) — Worker :$port has stale URL ($registered_url), re-registering ($tunnel)..."
+                  register_worker "$worker" "$tunnel"
+                fi
               fi
             }
 
