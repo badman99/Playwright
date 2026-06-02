@@ -35,12 +35,12 @@ jobs:
           npx @playwright/mcp install-browser chromium
           npx playwright install-deps chromium
 
-          # terminal-mcp-server + supergateway
+          # terminal-mcp-server + mcp-proxy
           echo "🖥️ Installing terminal-mcp-server..."
           git clone https://github.com/weidwonder/terminal-mcp-server.git /tmp/terminal-mcp
           cd /tmp/terminal-mcp && npm install && npm run build
           cd -
-          npm install -g supergateway
+          pip install mcp-proxy
 
           # rclone (WebDAV server ke liye)
           echo "☁️ Installing rclone..."
@@ -100,12 +100,12 @@ jobs:
 
       - name: Start Terminal MCP
         run: |
-          echo "🖥️ Starting terminal MCP on :3004 via supergateway..."
-          supergateway \
+          echo "🖥️ Starting terminal MCP on :3004 via mcp-proxy..."
+          mcp-proxy \
             --port 3004 \
             --host 0.0.0.0 \
-            --cors \
-            --stdio "node /tmp/terminal-mcp/build/index.js" \
+            --allow-origin '*' \
+            -- node /tmp/terminal-mcp/build/index.js \
             > /tmp/terminal.log 2>&1 &
           sleep 4
           if nc -z localhost 3004; then
