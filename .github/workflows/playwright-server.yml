@@ -139,58 +139,212 @@ jobs:
           sleep 2
           curl -sf http://localhost:$ROUTER_PORT/health > /dev/null && echo "✅ Router ready!" || (cat /tmp/router.log && exit 1)
 
-      - name: Start bore.pub Tunnel + Register with Worker
+      - name: Start bore.pub Tunnel + Watchdog
         env:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
         run: |
-          echo "🌐 Starting bore.pub tunnel on router (:$ROUTER_PORT)..."
-          bore local $ROUTER_PORT --to bore.pub > /tmp/bore.log 2>&1 &
-          BORE_PID=$!
-          sleep 5
+          # ─── Service Restart Functions ─────────────────────────────
+          restart_mcp() {
+            echo "🔄 Restarting Playwright MCP on :$MCP_PORT..."
+            fuser -k $MCP_PORT/tcp 2>/dev/null || true
+            sleep 1
+            PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
+            PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" \
+            npx @playwright/mcp@latest \
+              --config stealth-config.json \
+              --headless \
+              --port $MCP_PORT \
+              --host 127.0.0.1 \
+              --isolated \
+              --no-sandbox \
+              --allowed-origins '*' \
+              --allowed-hosts '*' \
+              --output-dir $SCREENSHOTS_DIR \
+              > /tmp/mcp.log 2>&1 &
+            for i in $(seq 1 15); do
+              nc -z localhost $MCP_PORT 2>/dev/null && echo "✅ MCP restarted!" && return 0
+              sleep 2
+            done
+            echo "❌ MCP restart failed!"
+            return 1
+          }
 
-          BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' /tmp/bore.log | head -1)
+          restart_storage() {
+            echo "🔄 Restarting Storage Server on :$STORAGE_PORT..."
+            fuser -k $STORAGE_PORT/tcp 2>/dev/null || true
+            sleep 1
+            STORAGE_PORT=$STORAGE_PORT STORAGE_ROOT=/tmp/storage \
+            node scripts/storage-server.js > /tmp/storage.log 2>&1 &
+            for i in $(seq 1 10); do
+              curl -sf http://localhost:$STORAGE_PORT/health > /dev/null 2>&1 && echo "✅ Storage restarted!" && return 0
+              sleep 2
+            done
+            echo "❌ Storage restart failed!"
+            return 1
+          }
 
-          if [ -z "$BORE_URL" ]; then
-            echo "❌ bore.pub URL nahi mili!"
-            cat /tmp/bore.log
-            exit 1
-          fi
+          restart_terminal() {
+            echo "🔄 Restarting Terminal MCP on :$TERMINAL_PORT..."
+            fuser -k $TERMINAL_PORT/tcp 2>/dev/null || true
+            sleep 1
+            mcp-proxy \
+              --port $TERMINAL_PORT \
+              --host 0.0.0.0 \
+              --allow-origin '*' \
+              -- node /tmp/terminal-mcp/build/index.js \
+              > /tmp/terminal.log 2>&1 &
+            for i in $(seq 1 10); do
+              nc -z localhost $TERMINAL_PORT 2>/dev/null && echo "✅ Terminal restarted!" && return 0
+              sleep 2
+            done
+            echo "❌ Terminal restart failed!"
+            return 1
+          }
 
-          TUNNEL_URL="http://$BORE_URL"
+          restart_webdav() {
+            echo "🔄 Restarting WebDAV on :$WEBDAV_PORT..."
+            fuser -k $WEBDAV_PORT/tcp 2>/dev/null || true
+            sleep 1
+            rclone serve webdav / \
+              --addr 127.0.0.1:$WEBDAV_PORT \
+              --allow-origin '*' \
+              --no-checksum \
+              --vfs-links \
+              --vfs-cache-mode full \
+              --dir-cache-time 10s \
+              > /tmp/webdav.log 2>&1 &
+            for i in $(seq 1 10); do
+              nc -z localhost $WEBDAV_PORT 2>/dev/null && echo "✅ WebDAV restarted!" && return 0
+              sleep 2
+            done
+            echo "❌ WebDAV restart failed!"
+            return 1
+          }
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════╗"
-          echo "║  🌐 TUNNEL:    $TUNNEL_URL"
-          echo "╠══════════════════════════════════════════════════╣"
-          echo "║  🎭 MCP:      $WORKER_URL/playwright/sse"
-          echo "║  🖥️ Terminal: $WORKER_URL/terminal/sse"
-          echo "║  📁 Storage:  $WORKER_URL/storage/"
-          echo "║  📂 WebDAV:   $WORKER_URL/storage-dav/"
-          echo "╚══════════════════════════════════════════════════╝"
-          echo ""
+          restart_router() {
+            echo "🔄 Restarting Router on :$ROUTER_PORT..."
+            fuser -k $ROUTER_PORT/tcp 2>/dev/null || true
+            sleep 1
+            node scripts/router.js > /tmp/router.log 2>&1 &
+            for i in $(seq 1 10); do
+              curl -sf http://localhost:$ROUTER_PORT/health > /dev/null 2>&1 && echo "✅ Router restarted!" && return 0
+              sleep 2
+            done
+            echo "❌ Router restart failed!"
+            return 1
+          }
 
-          # Worker ko register karo
-          echo "📡 Registering with Worker..."
-          REGISTER_RESP=$(curl -sf -X POST "$WORKER_URL/register" \
-            -H "Content-Type: application/json" \
-            -H "X-Auth-Token: $AUTH_TOKEN" \
-            -d "{\"tunnelUrl\": \"$TUNNEL_URL\"}" 2>&1)
-          
-          echo "Worker response: $REGISTER_RESP"
-          echo "✅ Runner registered!"
-
-          # Keep alive loop — re-register every 30 min + check processes
-          while kill -0 $BORE_PID 2>/dev/null; do
-            sleep 1800
-            echo "🔄 $(date) - Re-registering with worker..."
-            curl -sf -X POST "$WORKER_URL/register" \
+          register_worker() {
+            echo "📡 Registering tunnel with Worker: $1"
+            RESP=$(curl -sf -X POST "$WORKER_URL/register" \
               -H "Content-Type: application/json" \
               -H "X-Auth-Token: $AUTH_TOKEN" \
-              -d "{\"tunnelUrl\": \"$TUNNEL_URL\"}" || true
-            echo "⏳ $(date) - Still running..."
-          done
+              -d "{\"tunnelUrl\": \"$1\"}" 2>&1) || true
+            echo "   Worker response: $RESP"
+          }
 
-          echo "❌ bore.pub tunnel died!"
-          cat /tmp/bore.log
-          exit 1
+          print_banner() {
+            echo ""
+            echo "╔══════════════════════════════════════════════════╗"
+            echo "║  🌐 TUNNEL:    $1"
+            echo "╠══════════════════════════════════════════════════╣"
+            echo "║  🎭 MCP:      $WORKER_URL/playwright/sse"
+            echo "║  🖥️ Terminal: $WORKER_URL/terminal/sse"
+            echo "║  📁 Storage:  $WORKER_URL/storage/"
+            echo "║  📂 WebDAV:   $WORKER_URL/storage-dav/"
+            echo "╚══════════════════════════════════════════════════╝"
+            echo ""
+          }
+
+          # ─── Start bore.pub ──────────────────────────────────────
+          start_bore() {
+            echo "🌐 Starting bore.pub tunnel on router (:$ROUTER_PORT)..."
+            rm -f /tmp/bore.log
+            bore local $ROUTER_PORT --to bore.pub > /tmp/bore.log 2>&1 &
+            BORE_PID=$!
+            sleep 5
+
+            BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' /tmp/bore.log | head -1)
+            if [ -z "$BORE_URL" ]; then
+              echo "❌ bore.pub URL nahi mili!"
+              cat /tmp/bore.log
+              return 1
+            fi
+
+            TUNNEL_URL="http://$BORE_URL"
+            print_banner "$TUNNEL_URL"
+            register_worker "$TUNNEL_URL"
+            echo "✅ Runner registered!"
+          }
+
+          # ─── Initial bore start ───────────────────────────────────
+          start_bore || exit 1
+
+          # ─── Watchdog Loop (every 5 sec) ─────────────────────────
+          echo "🐶 Watchdog started — monitoring every 5 seconds..."
+          while true; do
+            sleep 5
+
+            # --- Check all service ports ---
+            if ! nc -z localhost $MCP_PORT 2>/dev/null; then
+              echo "⚠️ $(date) — MCP :$MCP_PORT down! Restarting..."
+              restart_mcp
+            fi
+
+            if ! curl -sf http://localhost:$STORAGE_PORT/health > /dev/null 2>&1; then
+              echo "⚠️ $(date) — Storage :$STORAGE_PORT down! Restarting..."
+              restart_storage
+            fi
+
+            if ! nc -z localhost $TERMINAL_PORT 2>/dev/null; then
+              echo "⚠️ $(date) — Terminal :$TERMINAL_PORT down! Restarting..."
+              restart_terminal
+            fi
+
+            if ! nc -z localhost $WEBDAV_PORT 2>/dev/null; then
+              echo "⚠️ $(date) — WebDAV :$WEBDAV_PORT down! Restarting..."
+              restart_webdav
+            fi
+
+            if ! curl -sf http://localhost:$ROUTER_PORT/health > /dev/null 2>&1; then
+              echo "⚠️ $(date) — Router :$ROUTER_PORT down! Restarting..."
+              restart_router
+            fi
+
+            # --- Check bore.pub tunnel via external health ---
+            if ! kill -0 $BORE_PID 2>/dev/null; then
+              echo "🔴 $(date) — bore.pub process died! Reconnecting..."
+              start_bore || {
+                echo "❌ bore reconnection failed! Retrying in 10s..."
+                sleep 10
+                continue
+              }
+              continue
+            fi
+
+            BORE_URL=$(grep -oE 'bore\.pub:[0-9]+' /tmp/bore.log | head -1)
+            if [ -n "$BORE_URL" ]; then
+              TUNNEL_CHECK="http://$BORE_URL"
+              if ! curl -sf --max-time 8 "$TUNNEL_CHECK/health" > /dev/null 2>&1; then
+                echo "🔴 $(date) — Tunnel health check failed! Reconnecting bore..."
+                kill $BORE_PID 2>/dev/null || true
+                sleep 2
+                start_bore || {
+                  echo "❌ bore reconnection failed! Retrying in 10s..."
+                  sleep 10
+                  continue
+                }
+                continue
+              fi
+            fi
+
+            # --- Periodic re-register every 30 min ---
+            NOW=$(date +%s)
+            LAST_REGISTER=${LAST_REGISTER:-$NOW}
+            if [ $((NOW - LAST_REGISTER)) -ge 1800 ]; then
+              echo "🔄 $(date) — Periodic re-register..."
+              register_worker "$TUNNEL_URL"
+              LAST_REGISTER=$NOW
+            fi
+          done
