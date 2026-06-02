@@ -65,7 +65,7 @@ jobs:
         run: |
           echo "🎭 Starting Playwright MCP on :$MCP_PORT..."
           PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
-          PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" \
+          PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36" \
           npx @playwright/mcp@latest \
             --config stealth-config.json \
             --headless \
@@ -119,14 +119,16 @@ jobs:
 
       - name: Start Tunnels + Watchdog
         run: |
-          register_worker() {
-            local worker_url="$1"
-            local tunnel_url="$2"
-            echo "📡 Registering $tunnel_url → $worker_url"
-            curl -sf -X POST "$worker_url/register" \
+          REDIS_URL="https://regular-parrot-113383.upstash.io"
+          REDIS_TOKEN="gQAAAAAAAbrnAAIgcDIwY2Y5NWJhMzliNDI0ZjcxOTA2ZmZkMzJhOWZkYTliNQ"
+
+          redis_set() {
+            local key="$1"
+            local value="$2"
+            curl -sf -X POST "${REDIS_URL}" \
+              -H "Authorization: Bearer ${REDIS_TOKEN}" \
               -H "Content-Type: application/json" \
-              -H "X-Auth-Token: $AUTH_TOKEN" \
-              -d "{\"tunnelUrl\": \"$tunnel_url\"}" 2>&1 || true
+              -d "[\"SET\",\"${key}\",\"${value}\"]" > /dev/null 2>&1
           }
 
           start_bore() {
@@ -150,7 +152,7 @@ jobs:
             fuser -k $MCP_PORT/tcp 2>/dev/null || true
             sleep 1
             PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
-            PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" \
+            PLAYWRIGHT_MCP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36" \
             npx @playwright/mcp@latest \
               --config stealth-config.json \
               --headless \
@@ -232,95 +234,77 @@ jobs:
           echo "╚══════════════════════════════════════════════════╝"
           echo ""
 
-          # ─── Register all 3 workers ─────────────────────────────
-          register_worker "$PLAYWRIGHT_WORKER" "$MCP_TUNNEL"
-          register_worker "$TERMINAL_WORKER" "$TERMINAL_TUNNEL"
-          register_worker "$WEBDAV_WORKER" "$WEBDAV_TUNNEL"
-
-          # ─── Verify registration ────────────────────────────────
-          sleep 2
-          verify_worker() {
-            local port="$1"
-            local tunnel="$2"
-            local worker="$3"
-            local reg_url=$(curl -sf --max-time 3 "$worker/health" 2>/dev/null | grep -oE '"tunnelUrl"\s*:\s*"[^"]*"' | head -1 | grep -oE 'https?://[^"]+')
-            if [ "$reg_url" != "$tunnel" ]; then
-              echo "⚠️ Worker :$port has stale URL ($reg_url), forcing re-register..."
-              register_worker "$worker" "$tunnel"
-            else
-              echo "✅ Worker :$port verified ($tunnel)"
-            fi
-          }
-          verify_worker "$MCP_PORT" "$MCP_TUNNEL" "$PLAYWRIGHT_WORKER"
-          verify_worker "$TERMINAL_PORT" "$TERMINAL_TUNNEL" "$TERMINAL_WORKER"
-          verify_worker "$WEBDAV_PORT" "$WEBDAV_TUNNEL" "$WEBDAV_WORKER"
-          echo "✅ All runners registered!"
+          # ─── Save to Redis ──────────────────────────────────────
+          redis_set "pw:TUNNEL_URL" "$MCP_TUNNEL"
+          redis_set "tm:TUNNEL_URL" "$TERMINAL_TUNNEL"
+          redis_set "wd:TUNNEL_URL" "$WEBDAV_TUNNEL"
+          echo "✅ All URLs saved to Redis!"
 
           # ─── Watchdog Loop ──────────────────────────────────────
           echo "🐶 Watchdog started — monitoring every 5 seconds..."
-          LAST_REGISTER=$(date +%s)
 
           while true; do
             sleep 5
 
-            # --- Service health checks ---
+            # --- Port checks: if port dead → kill old bore, restart service + reconnect bore ---
             if ! nc -z localhost $MCP_PORT 2>/dev/null; then
               echo "⚠️ $(date) — MCP :$MCP_PORT down! Restarting..."
+              kill $MCP_BORE_PID 2>/dev/null || true
               restart_mcp
+              NEW_BORE=$(start_bore $MCP_PORT) || continue
+              MCP_BORE_PID=${NEW_BORE%%:*}
+              MCP_TUNNEL=${NEW_BORE#*:}
+              redis_set "pw:TUNNEL_URL" "$MCP_TUNNEL"
+              echo "📡 MCP bore reconnected → $MCP_TUNNEL"
             fi
 
             if ! nc -z localhost $TERMINAL_PORT 2>/dev/null; then
               echo "⚠️ $(date) — Terminal :$TERMINAL_PORT down! Restarting..."
+              kill $TERMINAL_BORE_PID 2>/dev/null || true
               restart_terminal
+              NEW_BORE=$(start_bore $TERMINAL_PORT) || continue
+              TERMINAL_BORE_PID=${NEW_BORE%%:*}
+              TERMINAL_TUNNEL=${NEW_BORE#*:}
+              redis_set "tm:TUNNEL_URL" "$TERMINAL_TUNNEL"
+              echo "📡 Terminal bore reconnected → $TERMINAL_TUNNEL"
             fi
 
             if ! nc -z localhost $WEBDAV_PORT 2>/dev/null; then
               echo "⚠️ $(date) — WebDAV :$WEBDAV_PORT down! Restarting..."
+              kill $WEBDAV_BORE_PID 2>/dev/null || true
               restart_webdav
+              NEW_BORE=$(start_bore $WEBDAV_PORT) || continue
+              WEBDAV_BORE_PID=${NEW_BORE%%:*}
+              WEBDAV_TUNNEL=${NEW_BORE#*:}
+              redis_set "wd:TUNNEL_URL" "$WEBDAV_TUNNEL"
+              echo "📡 WebDAV bore reconnected → $WEBDAV_TUNNEL"
             fi
 
-            # --- Bore tunnel health checks ---
-            check_bore() {
-              local port="$1"
-              local bore_pid="$2"
-              local tunnel="$3"
-              local worker="$4"
+            # --- Bore PID checks: if bore died → reconnect + update Redis ---
+            if ! kill -0 $MCP_BORE_PID 2>/dev/null; then
+              echo "🔴 $(date) — Bore for :$MCP_PORT died! Reconnecting..."
+              NEW_BORE=$(start_bore $MCP_PORT) || continue
+              MCP_BORE_PID=${NEW_BORE%%:*}
+              MCP_TUNNEL=${NEW_BORE#*:}
+              redis_set "pw:TUNNEL_URL" "$MCP_TUNNEL"
+              echo "📡 MCP bore reconnected → $MCP_TUNNEL"
+            fi
 
-              if ! kill -0 $bore_pid 2>/dev/null; then
-                echo "🔴 $(date) — Bore for :$port process died! Reconnecting..."
-                local new_bore=$(start_bore $port) || return
-                local new_pid=${new_bore%%:*}
-                local new_tunnel=${new_bore#*:}
-                case $port in
-                  $MCP_PORT) MCP_BORE_PID="$new_pid"; MCP_TUNNEL="$new_tunnel" ;;
-                  $TERMINAL_PORT) TERMINAL_BORE_PID="$new_pid"; TERMINAL_TUNNEL="$new_tunnel" ;;
-                  $WEBDAV_PORT) WEBDAV_BORE_PID="$new_pid"; WEBDAV_TUNNEL="$new_tunnel" ;;
-                esac
-                register_worker "$worker" "$new_tunnel"
-                return
-              fi
+            if ! kill -0 $TERMINAL_BORE_PID 2>/dev/null; then
+              echo "🔴 $(date) — Bore for :$TERMINAL_PORT died! Reconnecting..."
+              NEW_BORE=$(start_bore $TERMINAL_PORT) || continue
+              TERMINAL_BORE_PID=${NEW_BORE%%:*}
+              TERMINAL_TUNNEL=${NEW_BORE#*:}
+              redis_set "tm:TUNNEL_URL" "$TERMINAL_TUNNEL"
+              echo "📡 Terminal bore reconnected → $TERMINAL_TUNNEL"
+            fi
 
-              local worker_health=$(curl -sf --max-time 5 "$worker/health" 2>/dev/null)
-              if [ -n "$worker_health" ]; then
-                 local registered_url=$(echo "$worker_health" | grep -oE '"tunnelUrl"\s*:\s*"[^"]*"' | head -1 | grep -oE 'https?://[^"]+')
-                if [ -n "$registered_url" ] && [ "$registered_url" != "$tunnel" ]; then
-                  echo "⚠️ $(date) — Worker :$port has stale URL ($registered_url), re-registering ($tunnel)..."
-                  register_worker "$worker" "$tunnel"
-                fi
-              fi
-            }
-
-            check_bore "$MCP_PORT" "$MCP_BORE_PID" "$MCP_TUNNEL" "$PLAYWRIGHT_WORKER"
-            check_bore "$TERMINAL_PORT" "$TERMINAL_BORE_PID" "$TERMINAL_TUNNEL" "$TERMINAL_WORKER"
-            check_bore "$WEBDAV_PORT" "$WEBDAV_BORE_PID" "$WEBDAV_TUNNEL" "$WEBDAV_WORKER"
-
-            # --- Periodic re-register every 30 min ---
-            NOW=$(date +%s)
-            if [ $((NOW - LAST_REGISTER)) -ge 1800 ]; then
-              echo "🔄 $(date) — Periodic re-register..."
-              register_worker "$PLAYWRIGHT_WORKER" "$MCP_TUNNEL"
-              register_worker "$TERMINAL_WORKER" "$TERMINAL_TUNNEL"
-              register_worker "$WEBDAV_WORKER" "$WEBDAV_TUNNEL"
-              LAST_REGISTER=$NOW
+            if ! kill -0 $WEBDAV_BORE_PID 2>/dev/null; then
+              echo "🔴 $(date) — Bore for :$WEBDAV_PORT died! Reconnecting..."
+              NEW_BORE=$(start_bore $WEBDAV_PORT) || continue
+              WEBDAV_BORE_PID=${NEW_BORE%%:*}
+              WEBDAV_TUNNEL=${NEW_BORE#*:}
+              redis_set "wd:TUNNEL_URL" "$WEBDAV_TUNNEL"
+              echo "📡 WebDAV bore reconnected → $WEBDAV_TUNNEL"
             fi
           done
