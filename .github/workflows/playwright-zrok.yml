@@ -95,10 +95,14 @@ jobs:
 
       - name: Start Terminal MCP
         run: |
-          echo "🖥️ Starting terminal MCP on :3004..."
-          node /tmp/terminal-mcp/build/index.js --sse --port 3004 \
+          echo "🖥️ Starting terminal MCP on :3004 via supergateway..."
+          npx -y supergateway \
+            --port 3004 \
+            --host 0.0.0.0 \
+            --cors \
+            -- node /tmp/terminal-mcp/build/index.js \
             > /tmp/terminal.log 2>&1 &
-          sleep 3
+          sleep 4
           nc -z localhost 3004 \
             && echo "✅ Terminal MCP ready!" \
             || (echo "⚠️ Terminal MCP issue:" && cat /tmp/terminal.log)
